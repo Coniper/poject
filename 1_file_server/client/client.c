@@ -21,9 +21,20 @@
 
 #define BFSZ 128
 
+typedef struct _file {
+    int sockfd;
+    int fd;
+    int len;
+}file;
+
+pthread_mutex_t mutex;
+
 int clientinit(int port);
 void menu();
 int senddata(int sockfd, char *buf);
+int sendfile(int sockfd, int fd, int len);
+void *thread_1(void *age);
+void *thread_2(void *age);
 
 int main(int argc, char *argv[])
 {
@@ -39,12 +50,13 @@ int main(int argc, char *argv[])
         goto ERR_STEP;
     }
 
-    char buf[BFSZ] = {0};
+    char *buf = (char *)malloc(BFSZ);
 
     while(1)
     {
         menu();
 
+        memset(buf, 0, sizeof(buf));
         printf("input: ");
         fgets(buf, sizeof(buf), stdin);
 
@@ -68,6 +80,7 @@ int main(int argc, char *argv[])
 #define nmsz 10
             char *p = &buf[nmsz];
             p[strlen(p)-1] = '\0';
+            printf("1_p:%s\n", p);
 
             int fd = open(p, O_RDONLY);
             if(-1 == fd)
@@ -76,52 +89,21 @@ int main(int argc, char *argv[])
                 continue;
             }
             int len = lseek(fd, 0, SEEK_END);
-            close(fd);
+            lseek(fd, 0, SEEK_SET);
 
             char *ret = (char *)malloc(BFSZ);
+            printf("p:%s", p);
             sprintf(ret, "uploading :%d;%s", len, p);
+            printf("ret: %s\n", ret);
 
             if(-1 == senddata(sockfd, ret))
             {
-                free(ret);
                 break;
             }
-
-            
-            int sendfile(sockfd, fd)
+            if(-1 == sendfile(sockfd, fd, len))
             {
-
-                pthread_t tid_1, tid_2;
-                if(0 > pthread_create(&tid_1, NULL, thread_1, NULL))
-                {
-                    perror("thread_create_1");
-                    return -1;
-
-                }
-                if(0 > pthread_create(&tid_2, NULL, thread_2, NULL))
-                {
-                    perror("thread_creat_2");
-                    return -1;
-                }
-
-                char *ret;
-                if(0 != pthread_join(tid_1, (void **)&ret))
-                {
-                    perror("pthread_join");
-                    return -1;
-                }
-                if(0 != pthread_join(tid_2, (void **)&ret))
-                {
-                    perror("pthread_join");
-                    return -1;
-                }
+                break;
             }
-            void *thread_1()
-            {
-                int fd = open()
-            }
-
-            free(ret);
         }
         else if(NULL != strstr(buf, "download"))
         {
@@ -132,7 +114,6 @@ int main(int argc, char *argv[])
             printf("thank for using client\n");
             break;
         }
-
     }
 
 ERR_STEP:
@@ -163,7 +144,7 @@ int clientinit(int port)
 
     return sockfd;
 }
-        
+
 void menu()
 {
     printf("\n*********************************************\n");
@@ -173,18 +154,92 @@ void menu()
 
 int senddata(int sockfd, char *buf) 
 {
-        size_t ret = send(sockfd, buf, strlen(buf), 0);
-        if(-1 == ret)
-        {
-            perror("send");
-            close(sockfd);
-            return -1;
-        }
-        else if(0 == ret)
-        {
-            printf("server network anomaly\n");
-            return -1;
-        }
+    printf("buf:%s\n", buf);
+    size_t ret = send(sockfd, buf, strlen(buf), 0);
+    if(-1 == ret)
+    {
+        perror("send");
+        close(sockfd);
+        return -1;
+    }
+    else if(0 == ret)
+    {
+        printf("server network anomaly\n");
+        return -1;
+    }
 
-        return 0;
+    return 0;
+}
+
+int sendfile(int sockfd, int fd, int len)
+{
+    file st;
+    st.sockfd   = sockfd;
+    st.fd       = fd;
+    st.len      = len;
+
+    if(0 > pthread_mutex_init(&mutex, NULL))
+    {
+        perror("mutex init");
+        return -1;
+    }
+
+    pthread_t tid_1, tid_2;
+    if(0 > pthread_create(&tid_1, NULL, thread_1, (void*)&st))
+    {
+        perror("thread_create_1");
+        return -1;
+
+    }
+    if(0 > pthread_create(&tid_2, NULL, thread_2, (void*)&st))
+    {
+        perror("thread_creat_2");
+        return -1;
+    }
+
+    char *ret;
+    if(0 != pthread_join(tid_1, (void **)&ret))
+    {
+        perror("pthread_join");
+        return -1;
+    }
+    if(0 != pthread_join(tid_2, (void **)&ret))
+    {
+        perror("pthread_join");
+        return -1;
+    }
+}
+
+void *thread_1(void *age)
+{
+    char *buf = (char *)malloc(BFSZ);
+    while(1){
+        memset(buf, 0, sizeof(buf));
+        pthread_mutex_lock(&mutex);
+        int ret = read(((file*)age)->fd, buf, sizeof(buf));
+        if(0 > ret)
+        {
+            break;
+            free(buf);
+        }
+        send(((file*)age)->sockfd, buf, sizeof(buf), 0);
+        pthread_mutex_unlock(&mutex);
+    }
+}
+
+void *thread_2(void *age)
+{
+    char *buf = (char *)malloc(BFSZ);
+    while(1){
+        memset(buf, 0, sizeof(buf));
+        pthread_mutex_lock(&mutex);
+        int ret = read(((file*)age)->fd, buf, sizeof(buf));
+        if(0 > ret)
+        {
+            break;
+            free(buf);
+        }
+        send(((file*)age)->sockfd, buf, sizeof(buf), 0);
+        pthread_mutex_unlock(&mutex);
+    }
 }
